@@ -1,4 +1,4 @@
-from easyocr import Reader
+import easyocr
 import os
 from dotenv import load_dotenv
 from google import genai
@@ -6,6 +6,7 @@ from google.genai import types
 from llm_client import call_llm
 from pdf2image import convert_from_path
 from groq import Groq
+import fitz  # pymupdf
 
 load_dotenv("./.env")
 
@@ -20,7 +21,7 @@ def run_ocr(image_path):
     print("Initializing EasyOCR reader (this might take a second)...")
     # 'en' specifies English. You can add other language codes to this list.
     # If you don't have a dedicated Nvidia GPU, it will automatically fallback to CPU.
-    reader = Reader(['en'])
+    reader = easyocr.Reader(['en'])
 
     print(f"Extracting text from: {image_path}...\n")
     # detail=0 tells EasyOCR to only return a list of text strings
@@ -100,3 +101,33 @@ while True:
     history_of_conversation.append({"role": "assistant", "content": ai_assistant_message})
 
     print(f"\nAssistant: {ai_assistant_message}\n")
+
+
+def highlight_pdf(pdf_path, phrases_to_highlight, output_path):
+    doc = fitz.open(pdf_path)
+
+    for page in doc:
+        for phrase in phrases_to_highlight:
+            for instance in page.search_for(phrase):
+                page.add_highlight_annot(instance)
+
+    doc.save(output_path)
+    print(f"Highlighted pdf saved as {output_path}")
+
+reference_prompt = f"""
+From this document: {extracted_text}
+You just answered this question: {input_text}
+You just answered: {ai_assistant_message}
+List the EXACT short phrases from the document you used to answer.
+Return as JSON list only: ["phrase1", "phrase2"]
+"""
+
+reference_response = client.chat.completions.create(
+    model=os.getenv("GROQ_MODEL"),
+    messages=[{"role": "user", "content": reference_prompt}],
+    max_tokens=1500
+)
+
+import json
+phrases = json.loads(reference_response.choices[0].message.content)
+highlight_pdf("daman_schedule_of_benefits.pdf", phrases, "highlighted_output.pdf")
