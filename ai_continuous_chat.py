@@ -34,7 +34,7 @@ while True:
     response = client.chat.completions.create(
     model=os.getenv("GROQ_MODEL"),
     messages=[
-        {"role": "system", "content": "You are a helpful football analyst assistant."}
+        {"role": "system", "content": system_message}
     ] + history_of_conversation,
     temperature=0.7,
     max_tokens=500
