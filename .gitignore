@@ -3,3 +3,6 @@ outputs/*.jsonl
 __pycache__/
 *.pyc
 .venv/.env.save
+.venv/
+*.png
+.env.save
