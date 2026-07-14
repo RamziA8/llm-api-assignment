@@ -2,4 +2,4 @@
 outputs/*.jsonl
 __pycache__/
 *.pyc
-.venv/
+.venv/.env.save
