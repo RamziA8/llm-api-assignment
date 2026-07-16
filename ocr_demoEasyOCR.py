@@ -149,6 +149,7 @@ def run_ocr(image_path):
     reader = easyocr.Reader(['en']) 
     print(f"Extracting text from: {image_path}...\n")
     results = reader.readtext(image_path, detail=1)
+    print(results)
     full_text = " ".join([item[1] for item in results])
     return results, full_text
 
@@ -157,8 +158,39 @@ def pdf_to_images(pdf_path):
     images = convert_from_path(pdf_path)
     return images
 
+# function for largerv documents that require high token usage
+def get_relevant_chunks(question, all_chunks, max_chunks=30):
+    # get keywords from the question
+    question_words = set(question.lower().split())
+    
+    # remove common words that aren't useful
+    stop_words = {"what", "is", "the", "a", "an", "are", "i", "my", "for", "do", "does", "how", "much"}
+    keywords = question_words - stop_words
+    
+    scored_chunks = []
+    for chunk in all_chunks:
+        chunk_text_lower = chunk["text"].lower()
+        # count how many keywords appear in this chunk
+        score = sum(1 for keyword in keywords if keyword in chunk_text_lower)
+        if score > 0:
+            scored_chunks.append((score, chunk))
+    
+    # sort by score, highest first
+    scored_chunks.sort(reverse=True, key=lambda x: x[0])
+    
+    # return only top chunks
+    return [chunk for score, chunk in scored_chunks[:max_chunks]]
+
+# def save_ocr_results(extracted_text, ocr_results_per_page, filename = "ocr_cache.json"):
+#     # we need to save the 40pg doc, so we must:
+#     # take the extracted text
+#     # take the info (bbox, text, confidence) for each page
+#     # save this into a separate file in the folder
+#     cache = {"extracted text": extracted_text, "ocr_results_per_page": 
+#     }
+
 if __name__ == "__main__":
-    PDF_FILE = "daman_schedule_of_benefits.pdf"
+    PDF_FILE = "PW-9380_230724_Policy-Wording-Abu-Dhabi-Emirate-Plans_V1R6.pdf"
 
     images = pdf_to_images(PDF_FILE)
 
@@ -199,11 +231,8 @@ if __name__ == "__main__":
                 "bbox": bbox
             })
 
-    system_message = f"""You are a helpful AI assistant. Answer questions based ONLY on this document.
-If the answer is not in the document, say 'This information is not in the document.'
-
-DOCUMENT:
-{extracted_text}"""
+    system_message = f"""'You are a helpful AI assistant. Answer questions based on the provided context. Do your best to piece together fragmented text, as it has been extracted via OCR.'
+"""
 
     history_of_conversation = []
 
@@ -220,9 +249,12 @@ DOCUMENT:
             print("Conversation ended. Goodbye!")
             break
 
+        relevant_chunks_for_answer = get_relevant_chunks(input_text, all_chunks, max_chunks=30)
+        context = " ".join([c["text"] for c in relevant_chunks_for_answer])
+
         history_of_conversation.append({
             "role": "user",
-            "content": input_text
+            "content": f"Context from document: {context}\n\nQuestion: {input_text}"
         })
 
         response = client.chat.completions.create(
@@ -245,7 +277,9 @@ DOCUMENT:
 
 
         # send only id and text to Groq, not bbox because it doesnt know what the image looks like, only understands text
-        chunk_list = [{"id": c["id"], "text": c["text"]} for c in all_chunks]
+        # chunk_list = [{"id": c["id"], "text": c["text"]} for c in all_chunks]
+        relevant_chunks = get_relevant_chunks(input_text, all_chunks)
+        chunk_list = [{"id": c["id"], "text": c["text"]} for c in relevant_chunks]
 
         reference_prompt = f"""
 The user asked: "{input_text}"
@@ -269,8 +303,8 @@ Return ONLY a JSON array of IDs, no explanation: ["0_5", "0_12"]
             print(f"Relevant chunk IDs: {relevant_ids}")
 
             # reload original page images to highlight fresh each time
-            # for i in range(len(images)):
-            #     images[i].save(f"page_{i + 1}.png")
+            for i in range(len(images)):
+                images[i].save(f"page_{i + 1}.png")
 
             # find matching chunks and draw highlights
             for chunk in all_chunks:
