@@ -158,7 +158,7 @@ def pdf_to_images(pdf_path):
     images = convert_from_path(pdf_path)
     return images
 
-# function for largerv documents that require high token usage
+# function for larger documents that require high token usage
 def get_relevant_chunks(question, all_chunks, max_chunks=30):
     # get keywords from the question
     question_words = set(question.lower().split())
@@ -228,7 +228,8 @@ if __name__ == "__main__":
                 "id": f"{page_idx}_{i}",  # unique id like "0_5" = page 0, chunk 5
                 "text": text,
                 "page": page_idx,
-                "bbox": bbox
+                "bbox": bbox,
+                "confidence": float(confidence)
             })
 
     system_message = f"""'You are a helpful AI assistant. Answer questions based on the provided context. Do your best to piece together fragmented text, as it has been extracted via OCR.'
@@ -333,6 +334,10 @@ Return ONLY a JSON array of IDs, no explanation: ["0_5", "0_12"]
                     x2 = bbox[2][0]
                     y2 = bbox[2][1]
                     draw.rectangle([x1, y1, x2, y2], fill=(255, 255, 0, 128))
+
+                    confidence_text = f"{confidence * 100:.1f}%"
+                    draw.text((x1, y1 - 15), confidence_text, fill=(255, 0, 0, 255))
+
                     image.save(image_path)
 
             # convert highlighted images back to one PDF
