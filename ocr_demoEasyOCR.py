@@ -8,7 +8,7 @@ from pdf2image import convert_from_path
 from groq import Groq
 import fitz  # pymupdf
 import json
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 # load_dotenv("./.env")
 
@@ -159,26 +159,34 @@ def pdf_to_images(pdf_path):
     return images
 
 # function for larger documents that require high token usage
-def get_relevant_chunks(question, all_chunks, max_chunks=30):
-    # get keywords from the question
+def get_relevant_chunks(question, all_chunks, max_chunks=50):
+    # Get keywords from the question and clean them
     question_words = set(question.lower().split())
-    
-    # remove common words that aren't useful
-    stop_words = {"what", "is", "the", "a", "an", "are", "i", "my", "for", "do", "does", "how", "much"}
+    stop_words = {"what", "in", "is", "the", "a", "an", "are", "i", "my", "for", "do", "does", "how", "much", "to", "of", "and", "on", "it"}
     keywords = question_words - stop_words
     
     scored_chunks = []
     for chunk in all_chunks:
         chunk_text_lower = chunk["text"].lower()
-        # count how many keywords appear in this chunk
-        score = sum(1 for keyword in keywords if keyword in chunk_text_lower)
+        
+        # Give points for exact keyword matches OR partial root matches
+        score = 0
+        for keyword in keywords:
+            if keyword in chunk_text_lower:
+                score += 2  # Exact word match gets higher weight
+            elif len(keyword) > 3 and keyword[:3] in chunk_text_lower:
+                score += 1  # Partial root match (e.g., "insur" matches "insurance")
+                
         if score > 0:
             scored_chunks.append((score, chunk))
     
-    # sort by score, highest first
+    # Sort by score, highest first
     scored_chunks.sort(reverse=True, key=lambda x: x[0])
     
-    # return only top chunks
+    # If keyword search is too narrow, fallback to grabbing the first N chunks so it never returns empty
+    if not scored_chunks and all_chunks:
+        return all_chunks[:max_chunks]
+        
     return [chunk for score, chunk in scored_chunks[:max_chunks]]
 
 # def save_ocr_results(extracted_text, ocr_results_per_page, filename = "ocr_cache.json"):
@@ -189,32 +197,66 @@ def get_relevant_chunks(question, all_chunks, max_chunks=30):
 #     cache = {"extracted text": extracted_text, "ocr_results_per_page": 
 #     }
 
+
+def save_ocr_cache(ocr_results_per_page, extracted_text, filename="ocr_cache.json"):
+    cache = {
+        "extracted_text": extracted_text,
+        "ocr_results_per_page": [
+            [
+                {
+                    "bbox": [[int(coord) for coord in point] for point in bbox],
+                    "text": text,
+                    "confidence": float(confidence)
+                }
+                for (bbox, text, confidence) in page_results
+            ]
+            for page_results in ocr_results_per_page
+        ]
+    }
+    with open(filename, "w") as f:
+        json.dump(cache, f)
+    print(f"OCR cache saved to {filename}")
+
+def load_ocr_cache(filename="ocr_cache.json"):
+    with open(filename, "r") as f:
+        cache = json.load(f)
+    extracted_text = cache["extracted_text"]
+    ocr_results_per_page = [
+        [
+            (item["bbox"], item["text"], item["confidence"])
+            for item in page_results
+        ]
+        for page_results in cache["ocr_results_per_page"]
+    ]
+    return ocr_results_per_page, extracted_text
+
 if __name__ == "__main__":
     PDF_FILE = "PW-9380_230724_Policy-Wording-Abu-Dhabi-Emirate-Plans_V1R6.pdf"
+    # PDF_FILE = "IMG_1764.pdf"
 
     images = pdf_to_images(PDF_FILE)
 
-    extracted_text = ""
-    ocr_results_per_page = []
-    
-    for i, image in enumerate(images):
-        print(f"Processing page {i + 1}...")
-        image_path = f"page_{i + 1}.png"
-        image.save(image_path)
-        results, text = run_ocr(image_path)
-        ocr_results_per_page.append(results)
-        extracted_text += text + "\n"
+    CACHE_FILE = "ocr_cache.json"
 
-    if extracted_text:
-        print("--- Extracted Text ---")
-        print(extracted_text)
-
-        prompt = f"Please provide a concise summary of the following text: {extracted_text}"
-        summarized_text = call_llm(prompt, max_tokens=2000)
-        print("--- Summarized Text ---")
-        print(summarized_text)
+    if os.path.exists(CACHE_FILE):
+        print("Loading from cache...")
+        ocr_results_per_page, extracted_text = load_ocr_cache(CACHE_FILE)
+        print("Cache loaded!")
     else:
-        print("No text detected.")
+        print("No cache found, running OCR...")
+        extracted_text = ""
+        ocr_results_per_page = []
+    
+        for i, image in enumerate(images):
+            print(f"Processing page {i + 1}...")
+            image_path = f"page_{i + 1}.png"
+            image.save(image_path)
+            results, text = run_ocr(image_path)
+            ocr_results_per_page.append(results)
+            extracted_text += text + "\n"
+    
+        save_ocr_cache(ocr_results_per_page, extracted_text, CACHE_FILE)
+        print("Cache saved!")
 
     # need to create a list of dictionaries, all_chunks, where each dictionary represents one text block found by OCR
 
@@ -335,8 +377,14 @@ Return ONLY a JSON array of IDs, no explanation: ["0_5", "0_12"]
                     y2 = bbox[2][1]
                     draw.rectangle([x1, y1, x2, y2], fill=(255, 255, 0, 128))
 
+                    # load a larger font
+                    try:
+                        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 20)
+                    except:
+                        font = ImageFont.load_default()
+
                     confidence_text = f"{confidence * 100:.1f}%"
-                    draw.text((x1, y1 - 15), confidence_text, fill=(255, 0, 0, 255))
+                    draw.text((x1 - 65, y1 - 5), confidence_text, fill=(255, 0, 0, 255), font = font)
 
                     image.save(image_path)
 
